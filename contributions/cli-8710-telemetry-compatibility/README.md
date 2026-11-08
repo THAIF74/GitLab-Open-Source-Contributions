@@ -29,7 +29,7 @@ The two Go files are complete upstream source files, not standalone programs. Th
 
 ## Validation status
 
-At the time this snapshot was uploaded, the GitLab pipeline was **running**. These checks had passed: `lint:comments`, `docs hugo_build`, `check_docs_markdown`, `check_args`, `check_embed`, `lint_commit`, and `check_go_generated_code`. Unit tests, integration tests, lint, the documentation update check, and coverage were not yet complete. The optional `govulncheck` job was manual.
+An initial CI run caught one test-helper lint issue (missing `t.Helper()` in a wrapper). That issue has been fixed in the latest source commit. A fresh GitLab pipeline (#3042462403) is running. The previous run had passed `lint:comments`, `docs hugo_build`, `check_docs_markdown`, `check_docs_update`, `check_args`, `check_embed`, `lint_commit`, and `check_go_generated_code`. Unit tests, integration tests, coverage, and the fresh lint run are still pending. The optional `govulncheck` job is manual.
 
 No local test run is claimed. The upstream MR remains open and awaits CI/review; it is not merged.
 
