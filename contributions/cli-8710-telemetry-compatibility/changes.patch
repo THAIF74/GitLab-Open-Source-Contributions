@@ -79,7 +79,7 @@
 
 --- a/cmd/glab/telemetry_test.go
 +++ b/cmd/glab/telemetry_test.go
-@@ -34,10 +34,14 @@ import (
+@@ -34,11 +34,16 @@ import (
  	"gitlab.com/gitlab-org/cli/internal/testing/cmdtest"
  )
  
@@ -88,16 +88,18 @@
 -// so it can carry project_path, which makes the wire format worth asserting.
 +// telemetryServer uses a current GitLab version that supports additional_properties.
  func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Factory, func() []trackEventOptions) {
+ 	t.Helper()
 +	return telemetryServerWithVersion(t, "19.6.0-ee", opts...)
 +}
 +
 +// telemetryServerWithVersion records track_event requests and serves the
 +// metadata endpoint with the supplied GitLab version.
 +func telemetryServerWithVersion(t *testing.T, metadataVersion string, opts ...cmdtest.FactoryOption) (cmdutils.Factory, func() []trackEventOptions) {
- 	t.Helper()
++	t.Helper()
  
  	// Recorded rather than asserted in the handler: it runs on the server's
-@@ -53,6 +57,13 @@ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Fact
+ 	// goroutine, where require must not be called.
+@@ -53,6 +58,13 @@ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Fact
  	var seen []recorded
  
  	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +113,7 @@
  		var body trackEventOptions
  		err := json.NewDecoder(r.Body).Decode(&body)
  
-@@ -60,7 +71,6 @@ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Fact
+@@ -60,7 +72,6 @@ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Fact
  		seen = append(seen, recorded{method: r.Method, path: r.URL.Path, body: body, err: err})
  		mu.Unlock()
  
@@ -119,7 +121,7 @@
  		_, _ = w.Write([]byte(`{}`))
  	}))
  	t.Cleanup(srv.Close)
-@@ -89,6 +99,41 @@ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Fact
+@@ -89,6 +100,41 @@ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Fact
  	}
  }
  
