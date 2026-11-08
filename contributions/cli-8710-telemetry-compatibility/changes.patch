@@ -1,0 +1,163 @@
+--- a/cmd/glab/telemetry.go
++++ b/cmd/glab/telemetry.go
+@@ -22,6 +22,12 @@ import (
+ // telemetrySendTimeout bounds how long glab delays its own exit for the event.
+ const telemetrySendTimeout = 2 * time.Second
+ 
++// The additional_properties field in usage_data/track_event is supported from GitLab 19.4.
++const (
++	additionalTelemetryPropertiesMinMajor = 19
++	additionalTelemetryPropertiesMinMinor = 4
++)
++
+ // noRetry stops the client's five default retries turning an instant failure,
+ // such as a refused connection, into the full timeout.
+ func noRetry(ctx context.Context, _ *http.Response, _ error) (bool, error) {
+@@ -110,17 +116,60 @@ func sendTelemetryData(f cmdutils.Factory, cmd *cobra.Command) {
+ 	if !ok {
+ 		return
+ 	}
+-	maps.Copy(event.AdditionalProperties, apiEventProperties(cmd))
+ 
+ 	// Not cmd.Context(): that is already cancelled if the command was interrupted.
+ 	ctx, cancel := context.WithTimeout(context.Background(), telemetrySendTimeout)
+ 	defer cancel()
+ 
+-	if err := trackEvent(client, event, telemetryRequestOptions(ctx)...); err != nil {
++	requestOptions := telemetryRequestOptions(ctx)
++	if serverSupportsAdditionalTelemetryProperties(client, requestOptions...) {
++		maps.Copy(event.AdditionalProperties, apiEventProperties(cmd))
++	} else {
++		// Older GitLab versions reject additional_properties and log an
++		// InvalidPropertyError for every command. Keep the base event, but omit
++		// the versioned fields when support cannot be confirmed.
++		event.AdditionalProperties = nil
++	}
++
++	if err := trackEvent(client, event, requestOptions...); err != nil {
+ 		dbg.Debug("Could not send telemetry data: ", err.Error())
+ 	}
+ }
+ 
++// serverSupportsAdditionalTelemetryProperties checks whether the target instance
++// supports the additional_properties field before glab sends it.
++func serverSupportsAdditionalTelemetryProperties(client *gitlab.Client, options ...gitlab.RequestOptionFunc) bool {
++	metadata, _, err := client.Metadata.GetMetadata(options...)
++	if err != nil {
++		dbg.Debug("Could not get GitLab metadata for telemetry: ", err.Error())
++		return false
++	}
++
++	return supportsAdditionalTelemetryProperties(metadata.Version)
++}
++
++// supportsAdditionalTelemetryProperties handles the edition suffix GitLab appends
++// to release versions (for example, "19.4.0-ee").
++func supportsAdditionalTelemetryProperties(instanceVersion string) bool {
++	numericVersion, _, _ := strings.Cut(instanceVersion, "-")
++	parts := strings.Split(numericVersion, ".")
++	if len(parts) < 2 {
++		return false
++	}
++
++	major, err := strconv.Atoi(parts[0])
++	if err != nil {
++		return false
++	}
++	minor, err := strconv.Atoi(parts[1])
++	if err != nil {
++		return false
++	}
++
++	return major > additionalTelemetryPropertiesMinMajor ||
++		(major == additionalTelemetryPropertiesMinMajor && minor >= additionalTelemetryPropertiesMinMinor)
++}
++
+ // trackEventOptions is gitlab.TrackEventOptions plus project_path, which
+ // client-go does not model yet. Sending the path lets the instance resolve the
+ // project and namespace IDs, which saves glab an API call of its own.
+
+--- a/cmd/glab/telemetry_test.go
++++ b/cmd/glab/telemetry_test.go
+@@ -34,10 +34,14 @@ import (
+ 	"gitlab.com/gitlab-org/cli/internal/testing/cmdtest"
+ )
+ 
+-// telemetryServer wires the factory to a server that records the request the
+-// hook actually puts on the wire. The send bypasses client-go's typed service
+-// so it can carry project_path, which makes the wire format worth asserting.
++// telemetryServer uses a current GitLab version that supports additional_properties.
+ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Factory, func() []trackEventOptions) {
++	return telemetryServerWithVersion(t, "19.6.0-ee", opts...)
++}
++
++// telemetryServerWithVersion records track_event requests and serves the
++// metadata endpoint with the supplied GitLab version.
++func telemetryServerWithVersion(t *testing.T, metadataVersion string, opts ...cmdtest.FactoryOption) (cmdutils.Factory, func() []trackEventOptions) {
+ 	t.Helper()
+ 
+ 	// Recorded rather than asserted in the handler: it runs on the server's
+@@ -53,6 +57,13 @@ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Fact
+ 	var seen []recorded
+ 
+ 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "application/json")
++
++		if r.Method == http.MethodGet && r.URL.Path == "/api/v4/metadata" {
++			_ = json.NewEncoder(w).Encode(map[string]string{"version": metadataVersion})
++			return
++		}
++
+ 		var body trackEventOptions
+ 		err := json.NewDecoder(r.Body).Decode(&body)
+ 
+@@ -60,7 +71,6 @@ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Fact
+ 		seen = append(seen, recorded{method: r.Method, path: r.URL.Path, body: body, err: err})
+ 		mu.Unlock()
+ 
+-		w.Header().Set("Content-Type", "application/json")
+ 		_, _ = w.Write([]byte(`{}`))
+ 	}))
+ 	t.Cleanup(srv.Close)
+@@ -89,6 +99,41 @@ func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Fact
+ 	}
+ }
+ 
++func Test_supportsAdditionalTelemetryProperties(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		name    string
++		version string
++		want    bool
++	}{
++		{name: "older minor release", version: "18.11.6-ee", want: false},
++		{name: "previous minor release", version: "19.3.9-ee", want: false},
++		{name: "minimum supported release", version: "19.4.0-ee", want: true},
++		{name: "newer release", version: "19.6.0-ee", want: true},
++		{name: "future major release", version: "20.0.0-ee", want: true},
++		{name: "unknown version", version: "", want: false},
++		{name: "malformed version", version: "not-a-version", want: false},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			assert.Equal(t, tt.want, supportsAdditionalTelemetryProperties(tt.version))
++		})
++	}
++}
++
++func Test_sendTelemetryData_omitsAdditionalPropertiesForOlderGitLab(t *testing.T) {
++	f, sent := telemetryServerWithVersion(t, "18.11.6-ee")
++
++	sendTelemetryData(f, &cobra.Command{Use: "version"})
++
++	events := sent()
++	require.Len(t, events, 1)
++	require.Nil(t, events[0].AdditionalProperties)
++}
++
+ func Test_sendTelemetryData(t *testing.T) {
+ 	tests := []struct {
+ 		name        string
