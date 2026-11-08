@@ -12,6 +12,7 @@ It is separate from my [GitLab Contribution Guide](https://github.com/THAIF74/Gi
 | [GitLab CLI !4263](https://gitlab.com/gitlab-org/cli/-/merge_requests/4263) | Fetch all issue notes when viewing comments | Open; pipeline passed at last check |
 | [GitLab CLI !4268](https://gitlab.com/gitlab-org/cli/-/merge_requests/4268) | Clarify deploy-token help text | Open; documentation CI check needs follow-up |
 | [GitLab CLI !4269](https://gitlab.com/gitlab-org/cli/-/merge_requests/4269) | Avoid caching Go build files in lint job | Open; pipeline passed at last check |
+| [GitLab CLI !4343](https://gitlab.com/gitlab-org/cli/-/merge_requests/4343) | Avoid unsupported telemetry properties on older GitLab instances | Open; CI running (several checks passed; tests pending) |
 
 ## Repository layout
 
