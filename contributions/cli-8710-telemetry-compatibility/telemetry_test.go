@@ -36,6 +36,7 @@ import (
 
 // telemetryServer uses a current GitLab version that supports additional_properties.
 func telemetryServer(t *testing.T, opts ...cmdtest.FactoryOption) (cmdutils.Factory, func() []trackEventOptions) {
+	t.Helper()
 	return telemetryServerWithVersion(t, "19.6.0-ee", opts...)
 }
 
